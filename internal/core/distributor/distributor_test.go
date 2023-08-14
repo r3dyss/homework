@@ -2,9 +2,9 @@ package distributor
 
 import (
 	"context"
-	"github.com/spacelift-io/homework-object-storage/internal/core"
 	"testing"
 
+	"github.com/spacelift-io/homework-object-storage/internal/core"
 	"github.com/spacelift-io/homework-object-storage/internal/storage/memory"
 	"github.com/stretchr/testify/assert"
 )
@@ -19,9 +19,8 @@ func TestObjectDistributor(t *testing.T) {
 	t.Run("when given object, it is put in object storage", func(t *testing.T) {
 		const objectID = "object_id"
 
-		distributor := NewObjectDistributor(map[int]ObjectStorage{
-			1: memory.NewObjectStorage(),
-		}, constSelector(1))
+		distributor := NewObjectDistributor(newMemoryStorageSelector())
+		distributor.AddStorage("storage_id", memory.NewObjectStorage())
 
 		blob := []byte("Hello")
 
@@ -51,17 +50,15 @@ func TestObjectDistributor(t *testing.T) {
 			"object_3": []byte("object_3"),
 		}
 
-		memoryStorages := []*memory.ObjectStorage{
-			memory.NewObjectStorage(),
-			memory.NewObjectStorage(),
-			memory.NewObjectStorage(),
+		distributor := NewObjectDistributor(newMemoryStorageSelector())
+		memoryStorages := map[string]*memory.ObjectStorage{
+			"1": memory.NewObjectStorage(),
+			"2": memory.NewObjectStorage(),
+			"3": memory.NewObjectStorage(),
 		}
-
-		distributor := NewObjectDistributor(map[int]ObjectStorage{
-			1: memoryStorages[0],
-			2: memoryStorages[1],
-			3: memoryStorages[2],
-		}, FNVSelector)
+		for ID, storage := range memoryStorages {
+			distributor.AddStorage(ID, storage)
+		}
 
 		for objID, obj := range objects {
 			err := distributor.PutObject(context.TODO(), objID, obj)
@@ -79,9 +76,7 @@ func TestObjectDistributor(t *testing.T) {
 	})
 
 	t.Run("when unknown objectID is given, we should return not found", func(t *testing.T) {
-		distributor := NewObjectDistributor(map[int]ObjectStorage{
-			1: memory.NewObjectStorage(),
-		}, FNVSelector)
+		distributor := NewObjectDistributor(newMemoryStorageSelector())
 		_, err := distributor.GetObject(context.TODO(), "random_object_id")
 		assert.Equal(t, core.ErrNotFound, err)
 	})

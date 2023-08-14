@@ -6,22 +6,21 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/docker/docker/client"
 	gorillaHandlers "github.com/gorilla/handlers"
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/sirupsen/logrus"
 	"github.com/spacelift-io/homework-object-storage/internal/client/docker"
 	"github.com/spacelift-io/homework-object-storage/internal/core/distributor"
 	"github.com/spacelift-io/homework-object-storage/internal/handler"
 	minioStorage "github.com/spacelift-io/homework-object-storage/internal/storage/minio"
+	"github.com/spacelift-io/homework-object-storage/internal/util"
 )
 
-const defaultMinioStorageBucketName = "default"
+const minioDockerStorageName = "amazin-object-storage-node"
 
 func run() error {
 	cli, err := client.NewClientWithOpts(client.FromEnv)
@@ -31,12 +30,24 @@ func run() error {
 
 	dockerClient := docker.NewClient(cli)
 
-	objStorages, err := getMinioStorageNodes(context.Background(), dockerClient)
-	if err != nil {
-		return err
-	}
-
-	objectDistributor := distributor.NewObjectDistributor(objStorages, distributor.FNVSelector)
+	objectDistributor := distributor.NewObjectDistributor(util.NewConsistentHashStorageSelector())
+	storageLocator := util.NewMinioStorageLocator(
+		func(ctx context.Context) ([]util.Container, error) {
+			return dockerClient.SearchContainers(ctx, minioDockerStorageName)
+		},
+		func(storageID string, storage *minioStorage.ObjectStorage) {
+			logrus.WithFields(logrus.Fields{
+				"storageID": storageID,
+			}).Info("adding storage")
+			objectDistributor.AddStorage(storageID, storage)
+		},
+		func(storageID string) {
+			logrus.WithFields(logrus.Fields{
+				"storageID": storageID,
+			}).Info("removing storage")
+			objectDistributor.RemoveStorage(storageID)
+		},
+	)
 
 	httpServer := &http.Server{
 		Addr: fmt.Sprintf(":3000"),
@@ -46,6 +57,28 @@ func run() error {
 	}
 
 	serverCtx, cancel := context.WithCancel(context.Background())
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+
+		for serverCtx.Err() == nil {
+			select {
+			case <-serverCtx.Done():
+				return
+			case <-t.C:
+				if err := storageLocator.Tick(serverCtx); err != nil {
+					logrus.WithError(err).Error("ticking server locator")
+				}
+			}
+		}
+	}()
+
 	go func() {
 		if err := httpServer.ListenAndServe(); err != nil {
 			logrus.WithError(err).Error("http server")
@@ -65,6 +98,7 @@ func run() error {
 	}
 	<-serverCtx.Done()
 
+	wg.Wait()
 	return nil
 }
 
@@ -72,40 +106,4 @@ func main() {
 	if err := run(); err != nil {
 		logrus.WithError(err).Error("running application")
 	}
-}
-
-func getMinioStorageNodes(ctx context.Context, dockerClient *docker.Client) (map[int]distributor.ObjectStorage, error) {
-	containers, err := dockerClient.ListContainers(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	objStorages := make(map[int]distributor.ObjectStorage)
-	for _, c := range containers {
-		if !strings.Contains(c.Name, "amazin-object-storage-node") {
-			continue
-		}
-
-		ipParts := strings.Split(c.IPAddress, ".")
-		if len(ipParts) != 4 {
-			continue
-		}
-		storageID, _ := strconv.Atoi(ipParts[3])
-
-		minioClient, err := minio.New(fmt.Sprintf("%s:9000", c.IPAddress), &minio.Options{
-			Creds:  credentials.NewStaticV4(c.EnvironmentVariables["MINIO_ACCESS_KEY"], c.EnvironmentVariables["MINIO_SECRET_KEY"], ""),
-			Secure: false,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("creating minio storage for '%s': %w", c.IPAddress, err)
-		}
-
-		objStorage, err := minioStorage.NewObjectStorage(ctx, minioClient, defaultMinioStorageBucketName)
-		if err != nil {
-			return nil, fmt.Errorf("creating minio object storage: %w", err)
-		}
-		objStorages[storageID] = objStorage
-	}
-
-	return objStorages, nil
 }

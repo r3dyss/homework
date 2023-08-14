@@ -2,15 +2,15 @@ package minio
 
 import (
 	"context"
-	"github.com/spacelift-io/homework-object-storage/internal/core"
 	"testing"
 
+	"github.com/spacelift-io/homework-object-storage/internal/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestObjectStorage(t *testing.T) {
-	storage, err := NewObjectStorage(context.Background(), testEnvironment.minioClient, "default")
+	storage, err := NewObjectStorage(context.Background(), testEnvironment.minioClient)
 	require.NoError(t, err)
 
 	t.Run("object should be put to storage", func(t *testing.T) {

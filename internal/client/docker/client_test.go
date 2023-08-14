@@ -30,16 +30,13 @@ func TestDockerClient(t *testing.T) {
 
 	dClient := NewClient(cli)
 
-	containers, err := dClient.ListContainers(context.Background())
+	containers, err := dClient.SearchContainers(context.Background(), "nginx")
 	require.NoError(t, err)
 
 	for _, c := range containers {
-		if c.Name != genericContainer.Name {
-			continue
-		}
-
-		assert.Equal(t, envVariables["TEST"], c.EnvironmentVariables["TEST"])
-		assert.Equal(t, genericContainer.IP, c.IPAddress)
+		assert.Equal(t, genericContainer.Name, c.Name)
+		assert.Equal(t, envVariables["TEST"], c.Environment["TEST"])
+		assert.Equal(t, genericContainer.IP, c.IP)
 		break
 	}
 }

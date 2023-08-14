@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/spacelift-io/homework-object-storage/internal/core"
 	"io"
+	"time"
 
 	"github.com/minio/minio-go/v7"
+	"github.com/spacelift-io/homework-object-storage/internal/core"
 )
 
 type ObjectStorage struct {
@@ -17,21 +18,24 @@ type ObjectStorage struct {
 
 const errKeyNoSuchKey = "NoSuchKey"
 
-func NewObjectStorage(ctx context.Context, minioClient *minio.Client, defaultBucket string) (*ObjectStorage, error) {
-	bucketExist, err := minioClient.BucketExists(ctx, defaultBucket)
+const defaultBucketName = "default"
+
+var defaultHealthCheckDuration = 3 * time.Second
+
+func NewObjectStorage(ctx context.Context, minioClient *minio.Client) (*ObjectStorage, error) {
+	bucketExist, err := minioClient.BucketExists(ctx, defaultBucketName)
 	if err != nil {
 		return nil, fmt.Errorf("checking if bucket exists: %w", err)
 	}
 
 	if !bucketExist {
-		if err := minioClient.MakeBucket(ctx, defaultBucket, minio.MakeBucketOptions{}); err != nil {
+		if err := minioClient.MakeBucket(ctx, defaultBucketName, minio.MakeBucketOptions{}); err != nil {
 			return nil, fmt.Errorf("creating bucket: %w", err)
 		}
 	}
-
 	return &ObjectStorage{
 		minioClient:   minioClient,
-		defaultBucket: defaultBucket,
+		defaultBucket: defaultBucketName,
 	}, nil
 }
 
@@ -56,4 +60,14 @@ func (o *ObjectStorage) Get(ctx context.Context, objectID string) ([]byte, error
 		return nil, err
 	}
 	return blob, nil
+}
+
+func (o *ObjectStorage) Online() (bool, error) {
+	cancelFn, err := o.minioClient.HealthCheck(defaultHealthCheckDuration)
+	if err != nil {
+		return false, err
+	}
+	cancelFn()
+
+	return o.minioClient.IsOnline(), nil
 }

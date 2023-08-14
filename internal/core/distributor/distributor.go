@@ -3,12 +3,13 @@ package distributor
 import (
 	"context"
 	"fmt"
+	"sync"
 )
 
 type ObjectDistributor struct {
-	storageIDs []int
-	storages   map[int]ObjectStorage
-	selectorFn StorageSelectorFn
+	storages        map[string]ObjectStorage
+	storageSelector StorageSelector
+	l               sync.RWMutex
 }
 
 type ObjectStorage interface {
@@ -16,23 +17,37 @@ type ObjectStorage interface {
 	Get(ctx context.Context, objectID string) ([]byte, error)
 }
 
-type StorageSelectorFn func(ctx context.Context, objectID string, storageIDs []int) (int, error)
+type StorageSelector interface {
+	AddStorage(storageID string)
+	RemoveStorage(storageID string)
+	LocateStorage(objectID string) string
+}
 
-func NewObjectDistributor(storages map[int]ObjectStorage, selectorFn StorageSelectorFn) *ObjectDistributor {
-	storageIDs := make([]int, 0)
-	for k := range storages {
-		storageIDs = append(storageIDs, k)
-	}
-
+func NewObjectDistributor(storageSelector StorageSelector) *ObjectDistributor {
 	return &ObjectDistributor{
-		storageIDs: storageIDs,
-		storages:   storages,
-		selectorFn: selectorFn,
+		storages:        make(map[string]ObjectStorage),
+		storageSelector: storageSelector,
 	}
 }
 
+func (d *ObjectDistributor) AddStorage(storageID string, storage ObjectStorage) {
+	d.l.Lock()
+	defer d.l.Unlock()
+
+	d.storages[storageID] = storage
+	d.storageSelector.AddStorage(storageID)
+}
+
+func (d *ObjectDistributor) RemoveStorage(storageID string) {
+	d.l.Lock()
+	defer d.l.Unlock()
+
+	delete(d.storages, storageID)
+	d.storageSelector.RemoveStorage(storageID)
+}
+
 func (d *ObjectDistributor) PutObject(ctx context.Context, objectID string, blob []byte) error {
-	objStorage, err := d.getObjectStorage(ctx, objectID)
+	objStorage, err := d.getObjectStorage(objectID)
 	if err != nil {
 		return err
 	}
@@ -41,7 +56,7 @@ func (d *ObjectDistributor) PutObject(ctx context.Context, objectID string, blob
 }
 
 func (d *ObjectDistributor) GetObject(ctx context.Context, objectID string) ([]byte, error) {
-	objStorage, err := d.getObjectStorage(ctx, objectID)
+	objStorage, err := d.getObjectStorage(objectID)
 	if err != nil {
 		return nil, err
 	}
@@ -49,15 +64,14 @@ func (d *ObjectDistributor) GetObject(ctx context.Context, objectID string) ([]b
 	return objStorage.Get(ctx, objectID)
 }
 
-func (d *ObjectDistributor) getObjectStorage(ctx context.Context, objectID string) (ObjectStorage, error) {
-	storageID, err := d.selectorFn(ctx, objectID, d.storageIDs)
-	if err != nil {
-		return nil, fmt.Errorf("selecting storage ID: %w", err)
-	}
+func (d *ObjectDistributor) getObjectStorage(objectID string) (ObjectStorage, error) {
+	d.l.RLock()
+	defer d.l.RUnlock()
 
+	storageID := d.storageSelector.LocateStorage(objectID)
 	objStorage, ok := d.storages[storageID]
 	if !ok {
-		return nil, fmt.Errorf("selected '%d' storage does not exist", storageID)
+		return nil, fmt.Errorf("selected '%s' storage does not exist", storageID)
 	}
 
 	return objStorage, nil

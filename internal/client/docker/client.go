@@ -3,20 +3,16 @@ package docker
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
-	"strings"
+	"github.com/spacelift-io/homework-object-storage/internal/util"
 )
 
 type Client struct {
 	cli *client.Client
-}
-
-type Container struct {
-	Name                 string
-	IPAddress            string
-	EnvironmentVariables map[string]string
 }
 
 func NewClient(cli *client.Client) *Client {
@@ -25,14 +21,31 @@ func NewClient(cli *client.Client) *Client {
 	}
 }
 
-func (c *Client) ListContainers(ctx context.Context) ([]Container, error) {
-	dockerContainers, err := c.cli.ContainerList(context.Background(), types.ContainerListOptions{})
+func (c *Client) SearchContainers(ctx context.Context, name string) ([]util.Container, error) {
+	dockerContainers, err := c.cli.ContainerList(ctx, types.ContainerListOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	containers := make([]Container, 0)
+	namesContain := func(name string, names []string) bool {
+		for _, n := range names {
+			if strings.Contains(n, name) {
+				return true
+			}
+		}
+		return false
+	}
+
+	containers := make([]util.Container, 0)
 	for _, dc := range dockerContainers {
+		if dc.State != "running" {
+			continue
+		}
+
+		if !namesContain(name, dc.Names) {
+			continue
+		}
+
 		container, err := c.getContainer(ctx, dc.ID)
 		if err != nil {
 			return nil, fmt.Errorf("getting '%s' container: %w", dc.ID, err)
@@ -42,10 +55,10 @@ func (c *Client) ListContainers(ctx context.Context) ([]Container, error) {
 	return containers, nil
 }
 
-func (c *Client) getContainer(ctx context.Context, containerID string) (Container, error) {
+func (c *Client) getContainer(ctx context.Context, containerID string) (util.Container, error) {
 	containerJson, err := c.cli.ContainerInspect(ctx, containerID)
 	if err != nil {
-		return Container{}, err
+		return util.Container{}, err
 	}
 
 	var networkSettings *network.EndpointSettings
@@ -53,10 +66,10 @@ func (c *Client) getContainer(ctx context.Context, containerID string) (Containe
 		break
 	}
 
-	return Container{
-		Name:                 containerJson.Name,
-		IPAddress:            networkSettings.IPAddress,
-		EnvironmentVariables: parseEnvVars(containerJson.Config.Env),
+	return util.Container{
+		Name:        containerJson.Name,
+		IP:          networkSettings.IPAddress,
+		Environment: parseEnvVars(containerJson.Config.Env),
 	}, nil
 }
 

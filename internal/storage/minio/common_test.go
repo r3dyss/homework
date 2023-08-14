@@ -3,10 +3,10 @@ package minio
 import (
 	"context"
 	"fmt"
-	"github.com/docker/go-connections/nat"
 	"os"
 	"testing"
 
+	"github.com/docker/go-connections/nat"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/sirupsen/logrus"
@@ -31,8 +31,7 @@ func createMinioClient() (*minio.Client, func(), error) {
 			"MINIO_ACCESS_KEY": "accessKey",
 			"MINIO_SECRET_KEY": "secretKey",
 		},
-		Cmd: []string{"server", "/data"},
-		//WaitingFor: wait.ForLog("Endpoint:  http://0.0.0.0:9000"),
+		Cmd:        []string{"server", "/data"},
 		WaitingFor: wait.ForListeningPort(minioPort),
 	}
 

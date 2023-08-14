@@ -36,8 +36,13 @@ services:
 
   gateway-container: # Here, this is where you can configure your gateway.
     # Feel free to change configuration options of this container, like the image, or the Dockerfile itself.
-    build: .
-    command: sleep 36000 # Changeme: Put in just so the container stays on after being started.
+    depends_on:
+      - amazin-object-storage-node-1
+      - amazin-object-storage-node-2
+      - amazin-object-storage-node-3
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports: [ "3000:3000" ]
     networks:
       amazin-object-storage:
